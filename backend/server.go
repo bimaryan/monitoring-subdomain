@@ -24,7 +24,7 @@ func getDynamicSubdomains() []string {
 	var targets []string
 	
 	// Sesuaikan dengan letak folder sites 1Panel kamu. 
-	rootDir := "/mnt/storage/hosting_clients" 
+	rootDir := "/opt/1panel/apps/openresty/openresty/www/sites/" 
 
 	entries, err := os.ReadDir(rootDir)
 	if err != nil {
