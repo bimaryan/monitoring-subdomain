@@ -16,7 +16,7 @@ export default function Home() {
   const fetchStatus = () => {
     setLoading(true);
     // Ubah ke "/api/health" jika Next.js rewrites sudah aktif di production
-    fetch("http://localhost:8010/api/health")
+    fetch("https://go-monitoring-api.ryaze.my.id/api/health")
       .then((res) => res.json())
       .then((data) => {
         setResults(data.data || []);
