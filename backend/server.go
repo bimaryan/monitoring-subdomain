@@ -22,7 +22,6 @@ type PingResult struct {
 	ResponseTime string `json:"response_time"`
 }
 
-// Struktur data untuk membaca balasan JSON dari Cloudflare
 type CloudflareResponse struct {
 	Success bool `json:"success"`
 	Result  []struct {
@@ -31,71 +30,76 @@ type CloudflareResponse struct {
 	} `json:"result"`
 }
 
-// Fungsi menarik data subdomain valid dari Cloudflare
+// Fungsi menarik data subdomain valid dari Cloudflare (Support Multi-Domain)
 func getSubdomainsFromCloudflare() []string {
 	var targets []string
-	uniqueTargets := make(map[string]bool) // Mencegah subdomain ganda (misal punya record A dan AAAA bersamaan)
+	uniqueTargets := make(map[string]bool)
 
-	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
+	// Ambil string Zone IDs (dipisahkan koma)
+	zoneIDsStr := os.Getenv("CLOUDFLARE_ZONE_IDS")
 	apiToken := os.Getenv("CLOUDFLARE_API_TOKEN")
 
-	if zoneID == "" || apiToken == "" {
-		fmt.Println("Peringatan: Kredensial Cloudflare tidak ditemukan di .env")
+	if zoneIDsStr == "" || apiToken == "" {
+		fmt.Println("Peringatan: Kredensial Cloudflare (ZONE_IDS atau API_TOKEN) tidak ditemukan di .env")
 		return []string{"https://ryaze.my.id"}
 	}
 
-	// Endpoint API Cloudflare untuk mengambil daftar DNS Record
-	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?per_page=100", zoneID)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		fmt.Println("Gagal membuat request:", err)
-		return []string{"https://ryaze.my.id"}
-	}
-
-	// Memasukkan Token API ke Header Authorization
-	req.Header.Add("Authorization", "Bearer "+apiToken)
-	req.Header.Add("Content-Type", "application/json")
-
+	// Pecah string Zone IDs menjadi array berdasarkan koma
+	zoneIDs := strings.Split(zoneIDsStr, ",")
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Println("Gagal menghubungi Cloudflare:", err)
-		return []string{"https://ryaze.my.id"}
-	}
-	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	// Looping untuk setiap Zone ID (Setiap Domain)
+	for _, rawZoneID := range zoneIDs {
+		zoneID := strings.TrimSpace(rawZoneID)
+		if zoneID == "" {
+			continue
+		}
 
-	var cfResp CloudflareResponse
-	if err := json.Unmarshal(body, &cfResp); err != nil {
-		fmt.Println("Gagal parsing JSON dari Cloudflare:", err)
-		return []string{"https://ryaze.my.id"}
-	}
+		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?per_page=100", zoneID)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			fmt.Println("Gagal membuat request untuk zone:", zoneID, "-", err)
+			continue // Lanjut ke domain berikutnya jika gagal
+		}
 
-	if !cfResp.Success {
-		fmt.Println("Cloudflare merespons API dengan status gagal")
-		return []string{"https://ryaze.my.id"}
-	}
+		req.Header.Add("Authorization", "Bearer "+apiToken)
+		req.Header.Add("Content-Type", "application/json")
 
-	// Memasukkan hasil record ke dalam antrean target
-	for _, record := range cfResp.Result {
-		// Hanya ambil record yang mengarah ke website
-		if record.Type == "A" || record.Type == "AAAA" || record.Type == "CNAME" {
-			// Abaikan wildcard domain (*)
-			if !strings.HasPrefix(record.Name, "*") {
-				targetURL := fmt.Sprintf("https://%s", record.Name)
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Println("Gagal menghubungi Cloudflare untuk zone:", zoneID, "-", err)
+			continue
+		}
 
-				// Pastikan tidak ada duplikat masuk ke daftar array
-				if !uniqueTargets[targetURL] {
-					uniqueTargets[targetURL] = true
-					targets = append(targets, targetURL)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		var cfResp CloudflareResponse
+		if err := json.Unmarshal(body, &cfResp); err != nil {
+			fmt.Println("Gagal parsing JSON untuk zone:", zoneID, "-", err)
+			continue
+		}
+
+		if !cfResp.Success {
+			fmt.Printf("Cloudflare merespons gagal untuk zone %s (cek kredensial)\n", zoneID)
+			continue
+		}
+
+		// Masukkan hasil record ke antrean target utama
+		for _, record := range cfResp.Result {
+			if record.Type == "A" || record.Type == "AAAA" || record.Type == "CNAME" {
+				if !strings.HasPrefix(record.Name, "*") {
+					targetURL := fmt.Sprintf("https://%s", record.Name)
+
+					if !uniqueTargets[targetURL] {
+						uniqueTargets[targetURL] = true
+						targets = append(targets, targetURL)
+					}
 				}
 			}
 		}
 	}
 
-	// Fallback jika tidak ada record yang ditemukan
 	if len(targets) == 0 {
 		targets = append(targets, "https://ryaze.my.id")
 	}
@@ -104,9 +108,7 @@ func getSubdomainsFromCloudflare() []string {
 }
 
 func main() {
-	// Memuat variabel dari file .env
 	godotenv.Load()
-
 	r := gin.Default()
 
 	r.Use(func(c *gin.Context) {
@@ -116,7 +118,6 @@ func main() {
 	})
 
 	r.GET("/api/health", func(c *gin.Context) {
-		// Menggunakan fungsi penarik data Cloudflare yang baru
 		subdomains := getSubdomainsFromCloudflare()
 
 		var results []PingResult
@@ -170,5 +171,6 @@ func main() {
 		})
 	})
 
-	r.Run("127.0.0.1:8010")
+	// Pastikan port hardcoded ke 8010 sesuai perbaikan sebelumnya
+	r.Run("127.0.0.1:8010") 
 }
